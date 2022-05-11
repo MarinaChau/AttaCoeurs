@@ -27,10 +27,8 @@ class CustomModel(tf.keras.Model):
             # Get adversarial attack for training
             Attack = self.adv_training_with["attack"]
             # Asssert Attack is implemented attack from adversarial_attacks.py module
-            Adv_attacks = [attacks.Fgsm, attacks.OneStepLeastLikely,
-                           attacks.RandomPlusFgsm, attacks.BasicIter,
-                           attacks.PgdRandomRestart,
-                           attacks.IterativeLeastLikely]
+            Adv_attacks = [attacks.Fgsm,
+                           attacks.PgdRandomRestart]
             assert Attack in Adv_attacks
             # Get hyperparameters of adversarial attack for trainining
             attack_kwargs = adv_training_with["attack kwargs"]
@@ -94,19 +92,11 @@ class CustomModel(tf.keras.Model):
         assert (test_images.shape[0],) == test_labels.shape
         # Get list of adversarial attacks for test
         attack_list = [attacks.Fgsm,
-                       attacks.RandomPlusFgsm,
-                       attacks.BasicIter,
-                       attacks.PgdRandomRestart,
-                       attacks.IterativeLeastLikely,
-                       attacks.OneStepLeastLikely]
+                       attacks.PgdRandomRestart]
 
         # Get attack parameters
         attack_params = [{"model": self, "eps": eps},  # Fgsm kwargs
-                         {"model": self, "eps": eps, "alpha": eps},  # Random Plus Fgsm kwargs
-                         {"model": self, "eps": eps, "alpha": eps / 40, "num_iter": 40},  # Basic Iter kwargs
-                         {"model": self, "eps": eps, "alpha": eps / 40, "num_iter": 40, "restarts": 4}, #PgdRandomRestart kwargs
-                         {"model": self, "eps": eps, "alpha": eps / 40, "num_iter": 40},  # IterativeLeastLikely kwargs
-                         {"model": self, "eps": eps}]  # OneStepLeastLikely kwargs
+                         {"model": self, "eps": eps, "alpha": eps / 40, "num_iter": 40, "restarts": 4}]#PgdRandomRestart kwargs
 
         # Initialize adversarial attacks with parameters
         attack_list = [Attack(**params) for Attack, params in
