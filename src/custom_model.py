@@ -29,7 +29,6 @@ class CustomModel(tf.keras.Model):
             # Asssert Attack is implemented attack from adversarial_attacks.py module
             Adv_attacks = [attacks.Fgsm,
                            attacks.PgdRandomRestart]
-            assert Attack in Adv_attacks
             # Get hyperparameters of adversarial attack for trainining
             attack_kwargs = adv_training_with["attack kwargs"]
             # Initialize adversarial attack that can generate adversarial examples for training batch
