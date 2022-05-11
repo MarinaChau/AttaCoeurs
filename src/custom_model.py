@@ -1,5 +1,5 @@
 import tensorflow as tf
-from adversarial_ml import adversarial_attacks as attacks
+from src import adversarial_attacks as attacks
 
 
 class CustomModel(tf.keras.Model):
