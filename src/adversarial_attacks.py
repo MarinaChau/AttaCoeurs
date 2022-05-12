@@ -1,8 +1,9 @@
 import tensorflow as tf
 import matplotlib.pyplot as plt
+import numpy as np
 
 class AdversarialAttack:
-    def __init__(self, model, eps):
+    def __init__(self, model, eps=None):
         """
         :param model: instance of tf.keras.Model that is used to generate adversarial examples with attack
         :param eps: float number - maximum perturbation size of adversarial attack
@@ -126,6 +127,96 @@ class PgdRandomRestart(AdversarialAttack):
 
         # return adversarial examples
         return max_X
+
+class DeepFool(AdversarialAttack):
+
+    def __init__(self, model, num_iter):
+        """
+        :param model: instance of tf.keras.Model that is used to generate adversarial examples
+        :param eps: float number - maximum perturbation size for adversarial attack
+        :param alpha: float number - step size in adversarial attack
+        :param num_iter: integer - number of iterations of pgd during one restart iteration
+        :param restarts: integer - number of restarts
+        """
+        super().__init__(model)
+        self.name = "DeepFool"
+        self.specifics = "DeepFool - " \
+                         f"num_iter: {num_iter}"
+        self.num_iter = num_iter
+
+    def fool(self, x, y):
+        x = tf.convert_to_tensor(x)
+        y = tf.convert_to_tensor(y)
+
+        x = tf.cast(x, tf.float32)
+        y = tf.cast(y, tf.float32)
+
+        attacked = False
+        n_iter = 0
+        pert = np.inf
+        x0 = x  # Initialize x0 = x, i = 0
+        xs = [x0]
+        r_tot = np.zeros(x.shape)
+
+        sorted_indices = tf.squeeze(self.model(tf.expand_dims(x, axis=0))).numpy().argsort()[::-1]  # The original label is at index 0, the others are 1-9
+
+        while not attacked:
+            if n_iter > self.num_iter:
+                break
+
+            with tf.GradientTape() as tape:
+                tape.watch(xs[n_iter])
+                prediction = tf.squeeze(self.model(tf.expand_dims(xs[n_iter], axis=0)))
+                loss = tf.keras.losses.MSE(y, prediction)
+            
+            original_gradient = tape.gradient(loss, xs[n_iter])  # Compute original gradient
+
+            for k in range(1, prediction.shape[-1]): # Line 6 : for k != k0 do
+                onehot_label = tf.one_hot(sorted_indices[k], prediction.shape[-1])
+                
+                with tf.GradientTape() as tape:
+                    tape.watch(xs[n_iter])
+                    predi = tf.squeeze(self.model(tf.expand_dims(xs[n_iter], axis=0)))
+                    partial_loss = tf.keras.losses.MSE(onehot_label, predi)
+                
+                partial_gradient = tape.gradient(partial_loss, xs[n_iter])
+                w_k = partial_gradient - original_gradient  # Line 7
+                f_k = prediction[sorted_indices[k]] - prediction[sorted_indices[0]]  # Line 8
+
+                pert_k = abs(f_k) / np.linalg.norm(tf.reshape(w_k, [-1]))
+
+                if pert_k < pert:  # Eventually finds the argmin
+                    pert = pert_k
+                    w = w_k
+                
+            
+            ri = -(pert * w) / np.linalg.norm(w)**.5
+            r_tot = r_tot + ri
+            xi = xs[n_iter] + ri
+            xi = tf.clip_by_value(xi, 0, 255)
+
+            xs.append(xi)
+
+            # Find if the example has been sufficiently attacked
+            predicted_label = np.argmax(self.model(tf.expand_dims(xs[n_iter], axis=0)))
+            
+            n_iter += 1
+            if predicted_label != np.argmax(y):
+                attacked = True
+        
+        return xs, r_tot
+
+    def __call__(self, clean_images, true_labels):
+        """
+        :param clean_images: tf.Tensor - shape (n,h,w,c) - clean images will be transformed into adversarial examples
+        :param true_labels: tf.Tensor- shape (n,) - true labels of clean_images
+        :return: adversarial examples generated with PGD with random restarts
+        """
+        X_attack = np.zeros(clean_images.shape)
+        for i, (x, y) in enumerate(zip(clean_images, true_labels)):
+            x_attack, _ = self.fool(x, y)
+            X_attack[i] = x_attack[-1]
+        return X_attack
 
 
 def attack_visual_demo(model, Attack, attack_kwargs, images, labels):
