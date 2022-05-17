@@ -226,7 +226,7 @@ class DeepFool(AdversarialAttack):
 
 class APGD(AdversarialAttack):
   
-    def __init__(self, model, eps, alpha, num_iter, norm, rho=0.75,):
+    def __init__(self, model, eps, alpha, num_iter, norm, rho=0.75):
         """
         List of parameters for Auto-PGD: 
         :param model: instance of tf.keras.Model that is used to generate adversarial examples with attack
