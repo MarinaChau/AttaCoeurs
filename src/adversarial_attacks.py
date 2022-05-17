@@ -1,6 +1,7 @@
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import numpy as np
+from math import ceil 
 
 class AdversarialAttack:
     def __init__(self, model, eps=None):
@@ -18,7 +19,10 @@ class AdversarialAttack:
 class Fgsm(AdversarialAttack):
     def __init__(self, model, eps):
         """
-        :param model: instance of tf.keras.Model that is used for generating adversarial examples
+        :param model: instance of tf.keras.Model that is used for generating adversarial ex
+        
+        
+        amples
         :param eps: floate number = maximum perturbation size in adversarial attack
         """
         super().__init__(model, eps)
@@ -242,6 +246,221 @@ class DeepFool(AdversarialAttack):
         return X_attack
 
 
+class APGD(AdversarialAttack):
+  
+    def __init__(self, model, eps, alpha, num_iter, norm, rho=0.75):
+        """
+        List of parameters for Auto-PGD: 
+        :param model: instance of tf.keras.Model that is used to generate adversarial examples with attack
+        :param eps: float number - maximum perturbation size of adversarial attack 
+        :param norm: norm we will using 
+        :param num_iter: number of iterations
+        :param eta: lsit of stepsizes used in our Auto-PGD attack 
+        :param ckp: list of checkpoints identified during Auto-PGD
+        :param rho: parameter for decreasing the step size    
+        :param loss: loss we will optimise, in {CrossEntropy-(CE), DifferenceLogitsRatio-(DLR)} 
+        :param norm: defines the norm we use for proj {L1,L2,Linf}
+        """
+        super().__init__(model, eps)
+        self.eps = eps
+        self.alpha = alpha
+        self.num_iter = num_iter
+        self.loss_obj = tf.keras.losses.CategoricalCrossentropy()
+        self.rho = rho
+
+        # norm specification 
+        self.norm = norm
+        # memory
+        self.eval_loss = []
+        self.iter = 0 
+        self.eta = []
+        self.ckp = []
+        self.prev_state = []
+        self.optimal = (0,0)
+        # info
+        self.name = "Auto-PGD"
+        self.specifics = "Auto-PGD - " \
+                f"eps: {eps} - alpha: {alpha} - " \
+            f"num_iter: {num_iter} "
+
+    def generateCKP(self):
+        """
+        We proceed as in the article and define the checkpoints as 
+        w_j = [p_j * num_iter ] ≤ num_iter,
+        p_(j+1) = p_j + max{p_j - p_(j-1) -0.03, 0.06}
+        """
+        p_0 = 0
+        w = ceil(p_0*self.num_iter)
+        self.ckp.append(w)
+
+        p_1 = 0.22
+        w = ceil(p_1*self.num_iter)
+        self.ckp.append(w)
+
+        while w < self.num_iter : 
+            p_2 = p_1 + max(p_1-p_0-0.03, 0.06)
+            w = ceil(p_2*self.num_iter)
+            p_0 = p_1
+            p_1 = p_2
+            self.ckp.append(w)
+              
+        # end of the checkpoints generation
+
+
+    def intialiseAPGD(self,clean_image,true_label):
+        # Make sure memmory is empty 
+        self.eval_loss = []
+        self.iter = 0 
+        self.eta = []
+        self.ckp = []
+        self.prev_state = []
+        self.optimal = (0,0)
+        
+        # first step 
+        self.eta.append(2*self.eps)
+        self.prev_state = clean_image
+
+        with tf.GradientTape(watch_accessed_variables=False) as tape : # compute \grad_f( x_k )
+       
+            tape.watch(clean_image)
+            pred1 = tf.squeeze(self.model(tf.expand_dims(clean_image, axis=0)))
+            
+            true_label = tf.one_hot(int(true_label),10)
+
+            loss = self.loss_obj(true_label, pred1)  
+            gradient = tape.gradient(loss, clean_image) 
+        
+        self.eval_loss.append(loss)    # keeping track of the loss ( for halving the stepsize )
+      
+        X = clean_image + self.eta[-1] * gradient   # first perturbation 
+   
+        X = self.projectionOnS(X,clean_image)     # first projection on S 
+        pred2 = tf.squeeze(self.model(tf.expand_dims(X, axis=0)))
+        self.iter += 1
+        if loss <self.loss_obj(true_label,pred2):
+            self.optimal = (X,pred2,self.loss_obj(true_label,pred2))
+            return X 
+        self.optimal = (clean_image,pred1,loss)
+        return X 
+            
+
+    def projectionOnS(self,X,clean_image):
+        """
+        Orthogonal projection of a perturbated image on S,
+        the ball of acceptable permutations around the clean image.
+        
+        :param X: perturbated image.
+        :param clean_image: entry image we try to perturbate.
+        """
+        if self.norm == 'L1':
+            # X = clean_image + (X-clean_image)
+            norm = tf.norm(X-clean_image, ord = 1)
+            res = self.eps * tf.multiply(X-clean_image ,norm)
+            X = clean_image + res
+        if self.norm == 'L2':
+            # X = clean_image + (X-clean_image)
+            res = tf.clip_by_norm(X-clean_image,self.eps)
+            X = clean_image + res
+        if self.norm == 'Linf': 
+            X = tf.clip_by_value(X, clean_image-self.eps, clean_image + self.eps)
+        
+        # make sure the tensor's coordinates stay in the good domain
+        X = tf.clip_by_value(X, 0, 1)
+        return X
+
+    
+    def gradientStep(self,X,clean_image,true_label):
+        """ 
+        Performs an iteration of the A-PGD alogrithm
+        """
+        
+        true_label = tf.one_hot(int(true_label),10) # one hot encoding of the label
+        
+        with tf.GradientTape(watch_accessed_variables=False) as tape :
+
+            # compute \grad_f( x_k )
+            tape.watch(X)    
+            pred = tf.squeeze(self.model(tf.expand_dims(X, axis=0)))
+            loss = self.loss_obj(true_label, pred)  
+            gradient = tape.gradient(loss, X)          
+            # keeping track of the loss (for halvig stepsize)
+            self.eval_loss.append(loss)
+            # Compute z_(k+1)
+            z = X + self.eta[-1] * gradient 
+            z = self.projectionOnS(z,clean_image)
+            
+            # Compute x_(k+1)
+            temp = X + self.alpha * ( z - X ) + (1-self.alpha) * (X - self.prev_state)
+            # update previous state 
+            self.prev_state = X
+            
+            # update X and optimal pertubation 
+            X = self.projectionOnS(temp,clean_image)
+            if loss > self.optimal[2] :
+                self.optimal = (X,pred,loss)
+            return(X)
+    
+    
+
+    def stepsizeRefresh(self):
+        """
+        At a checkpoint, checks if the stepsize used in APGD has to be halved based on two criteria :
+        
+        1) " SUM FOR i IN OF {w_{j-1},..., w_{j}-1} OF : 11_{ f( x_(i+1)) > f( x_(i)) }  < ρ * (w_{j} - w_{j-1} "
+        Counts in how many cases since the last checkpoint w_{j−1} the update step has been successful in increasing f. 
+        If this happened for at least a fraction ρ of the total update steps, then the step size is kept as the 
+        optimization is proceeding properly (we use ρ = 0.75).
+
+        2) " eta_ckp[i-1] = eta_ckp[i] AND fmax_ckp[i-1] =  fmax_ckp[i] "
+        Which holds true if the step size eta_ckp[i] was not reduced at the last checkpoint and there has been no improvement
+        in the best found objective value fmax_ckp[i-1] since the last checkpoint ckp[i-1]. 
+        This prevents getting stuck in potential cycles
+        """
+        # working on first condition : 
+        j = self.iter
+        interval = [self.ckp[j-1],self.ckp[j]-1]
+        sum_ind = sum([self.eval_loss[i]<self.eval_loss[i+1] for i in range(interval[0],interval[1])])
+        cond1 = sum_ind < self.rho * (self.ckp[j]-self.ckp[j-1])
+        
+        # working on second condition : 
+        equal = max(self.eval_loss[:self.ckp[j-1]]) == max(self.eval_loss[:self.ckp[j]])
+        cond2 = (self.eta[j]==self.eta[j-1]) and equal
+        if cond1 or cond2 : 
+            self.eta.append(self.eta[-1]/2)
+
+    
+    # make the object a callable function 
+    def __call__(self, clean_images, true_labels):
+        """
+        :param clean_images: tf.Tensor - shape (n,h,w,c) - clean images will be transformed into adversarial examples
+        :param true_labels: tf.Tensor- shape (n,) - true labels of clean_images
+        :return: adversarial examples generated with autp-PGD
+        """
+
+        X_attack = np.zeros(clean_images.shape) # memory of the attacks
+        self.generateCKP()          # checkpoints generation
+        for i, (x, y) in enumerate(zip(clean_images, true_labels)):
+
+            x = tf.convert_to_tensor(x)
+            y = tf.convert_to_tensor(y)
+
+            x = tf.cast(x, tf.float32)
+            y = tf.cast(y, tf.float32)
+
+            # initializatin of the A-PGD
+            x_attack = self.intialiseAPGD(x,y)
+            for k in range(1, self.num_iter):
+                # add the pertubation following A-PGD algo 
+                x_attack = self.gradientStep(x_attack,x,y)
+                # if we reach a checkpoint, update the stepsize 
+                if k in self.ckp :
+                    self.stepsizeRefresh()
+            X_attack[i] = x_attack
+        return X_attack
+
+
+
+    
 def attack_visual_demo(model, Attack, attack_kwargs, images, labels):
     """ Demo of adversarial attack on 20 images, visualizes adversarial robustness on 20 images
     :param model: tf,keras.Model
