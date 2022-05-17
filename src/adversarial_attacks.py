@@ -146,6 +146,7 @@ class DeepFool(AdversarialAttack):
         self.loss_obj = tf.keras.losses.CategoricalCrossentropy()
 
     def fool(self, x, y, overshoot=1e-3):
+
         x = tf.convert_to_tensor(x)
         y = tf.convert_to_tensor(y)
         x = tf.cast(x, tf.float32)
@@ -153,58 +154,67 @@ class DeepFool(AdversarialAttack):
 
         attacked = False
         n_iter = 0
-        pert = np.inf
         x0 = x  # Initialize x0 = x, i = 0
         xs = [x0]
-        r_tot = np.zeros(x.shape)
 
-        sorted_indices = tf.squeeze(self.model(tf.expand_dims(x, axis=0))).numpy().argsort()[::-1]  # The original label is at index 0, the others are 1-9
-        while not attacked:
-            if n_iter > self.num_iter:
-                break
+        sorted_indices = tf.squeeze(tf.argsort(self.model(tf.expand_dims(x, axis=0))))[::-1]  # The original label is at index 0, the others are 1-9
+
+
+        def _cond(n_iter, xi, r_tot):
+          predicted_label = tf.argmax(tf.squeeze(self.model(tf.expand_dims(xi, axis=0))))
+          predicted_label = tf.cast(predicted_label, "int32")
+          return tf.logical_and(tf.equal(predicted_label, tf.reduce_sum(y)),
+                               n_iter < self.num_iter)
+
+        def _body(n_iter, xi, r_tot):
+
+            pert = np.inf
+            w = tf.zeros_like(x)
 
             with tf.GradientTape() as tape:
-                tape.watch(xs[n_iter])
-                prediction = tf.squeeze(self.model(tf.expand_dims(xs[n_iter], axis=0)))
+                tape.watch(xi)
+                prediction = tf.squeeze(self.model(tf.expand_dims(xi, axis=0)))
                 y_onehot = tf.one_hot(y, prediction.shape[-1])
                 loss = self.loss_obj(tf.squeeze(y_onehot), prediction)
             
-            original_gradient = tape.gradient(loss, xs[n_iter])  # Compute original gradient
+            original_gradient = tape.gradient(loss, xi)  # Compute original gradient
 
             for k in range(1, prediction.shape[-1]): # Line 6 : for k != k0 do
                 onehot_label = tf.one_hot(sorted_indices[k], prediction.shape[-1])
                 
                 with tf.GradientTape() as tape:
-                    tape.watch(xs[n_iter])
-                    predi = self.model(tf.expand_dims(xs[n_iter], axis=0))
+                    tape.watch(xi)
+                    predi = self.model(tf.expand_dims(xi, axis=0))
                     partial_loss = self.loss_obj(onehot_label, tf.squeeze(predi))
                 
-                partial_gradient = tape.gradient(partial_loss, xs[n_iter])
+                partial_gradient = tape.gradient(partial_loss, xi)
                 w_k = partial_gradient - original_gradient  # Line 7
                 f_k = prediction[sorted_indices[k]] - prediction[sorted_indices[0]]  # Line 8
 
-                pert_k = abs(f_k) / np.linalg.norm(tf.reshape(w_k, [-1]))
+                pert_k = abs(f_k) / tf.norm(tf.reshape(w_k, [-1]))
 
                 if pert_k < pert:  # Eventually finds the argmin
                     pert = pert_k
                     w = w_k
                 
             
-            ri = -((pert + 1e-6) * w) / np.linalg.norm(w)
+            ri = -((pert + 1e-6) * w) / tf.norm(w)
             r_tot = r_tot + ri
-            xi = xs[n_iter] + (1+overshoot)*ri
+            xi = xi + (1+overshoot)*ri
             xi = tf.clip_by_value(xi, 0, 1)
 
             xs.append(xi)
 
             # Find if the example has been sufficiently attacked
-            predicted_label = np.argmax(self.model(tf.expand_dims(xi, axis=0)))
-            n_iter += 1
-            if predicted_label != int(y.numpy().squeeze()):
-                attacked = True
-        
+            predicted_label = tf.argmax(tf.squeeze(self.model(tf.expand_dims(xi, axis=0))))
+            predicted_label = tf.cast(predicted_label, "int32")
+
+            return n_iter+1, xi, r_tot
+
+        _, xi, r_tot = tf.while_loop(_cond, _body, [0, x0, tf.zeros_like(x0)])
+            
         r_tot = (1 + overshoot) * r_tot
-        return xs, r_tot
+        return xi, r_tot
 
     def __call__(self, clean_images, true_labels):
         """
@@ -212,11 +222,23 @@ class DeepFool(AdversarialAttack):
         :param true_labels: tf.Tensor- shape (n,) - true labels of clean_images
         :return: adversarial examples generated with PGD with random restarts
         """
-        X_attack = np.zeros(clean_images.shape)
-        for i, (x, y) in enumerate(zip(clean_images, true_labels)):
-            print(f"Attacking image {i}/{len(true_labels)}...")
+
+        if isinstance(clean_images, tf.Tensor):
+          # print("Tensor")
+          X_attack_list = []
+          for i in range(clean_images.get_shape().as_list()[0]):
+            x = clean_images[i, :, :, :]
+            y = true_labels[i]
+            # print(f"Attacking image {i}/{len(true_labels)}...")
             x_attack, _ = self.fool(x, y)
-            X_attack[i] = x_attack[-1]
+            X_attack_list.append(x_attack)
+          X_attack = tf.stack(X_attack_list)
+        else:
+          X_attack = np.zeros(clean_images.shape)
+          for i, (x, y) in enumerate(zip(clean_images, true_labels)):
+              # print(f"Attacking image {i}/{len(true_labels)}...")
+              x_attack, _ = self.fool(x, y)
+              X_attack[i] = x_attack[-1]
         return X_attack
 
 
