@@ -167,7 +167,7 @@ class DeepFool(AdversarialAttack):
         def _cond(n_iter, xi, r_tot):
           predicted_label = tf.argmax(tf.squeeze(self.model(tf.expand_dims(xi, axis=0))))
           predicted_label = tf.cast(predicted_label, "int32")
-          return tf.logical_and(tf.equal(predicted_label, tf.reduce_sum(y)),
+          return tf.logical_and(tf.equal(predicted_label, tf.reduce_sum(sorted_indices[0])),
                                n_iter < self.num_iter)
 
         def _body(n_iter, xi, r_tot):
