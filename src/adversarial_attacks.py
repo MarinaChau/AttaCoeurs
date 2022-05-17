@@ -18,7 +18,10 @@ class AdversarialAttack:
 class Fgsm(AdversarialAttack):
     def __init__(self, model, eps):
         """
-        :param model: instance of tf.keras.Model that is used for generating adversarial examples
+        :param model: instance of tf.keras.Model that is used for generating adversarial ex
+        
+        
+        amples
         :param eps: floate number = maximum perturbation size in adversarial attack
         """
         super().__init__(model, eps)
@@ -401,7 +404,7 @@ class APGD(AdversarialAttack):
         X_attack = np.zeros(clean_images.shape)
         for i, (x, y) in enumerate(zip(clean_images, true_labels)):
             # initializatin of the A-PGD
-            x_attack = self.intialiseAPGD(self,x,y)
+            x_attack = self.intialiseAPGD(x,y)
             for k in range(1, self.num_iter):
                 # add the pertubation following A-PGD algo 
                 x_attack = self.gradientStep(x_attack,x,y)
