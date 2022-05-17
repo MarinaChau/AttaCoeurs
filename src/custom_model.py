@@ -34,11 +34,11 @@ class CustomModel(tf.keras.Model):
             # Initialize adversarial attack that can generate adversarial examples for training batch
             self.generate_adv_examples = Attack(model=self, **attack_kwargs)
             # Get number of adversarial examples for training batch
-            self.num_adv_examples = self.adv_training_with["num adv"]
+            # self.num_adv_examples = self.adv_training_with["num adv"]
             # Training info: with adversarial training
             self.training_info = " adversarially trained with " + \
-                                 self.generate_adv_examples.specifics + \
-                                 " - k: {}".format(self.num_adv_examples)
+                                 self.generate_adv_examples.specifics
+                                #  " - k: {}".format(self.num_adv_examples)
 
         else:
             # Training info: Without adversarial training
@@ -57,11 +57,11 @@ class CustomModel(tf.keras.Model):
         # If adversarial training is used get adversarial examples for training batch
         if self.adv_training_with != None:
             # Get adversarial examples
-            adv_x = self.generate_adv_examples(x[:self.num_adv_examples], y[:self.num_adv_examples])
-            # Get clean images
-            clean_x = x[self.num_adv_examples:]
-            # Make new traininig batch
-            x = tf.concat([adv_x, clean_x], axis=0)
+            x = self.generate_adv_examples(x[:self.num_adv_examples], y[:self.num_adv_examples])
+            # # Get clean images
+            # clean_x = x[self.num_adv_examples:]
+            # # Make new traininig batch
+            # x = tf.concat([adv_x, clean_x], axis=0)
 
         # Track Gradients w.r.t weights
         with tf.GradientTape() as tape:
