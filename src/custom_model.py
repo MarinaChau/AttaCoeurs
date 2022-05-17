@@ -57,7 +57,7 @@ class CustomModel(tf.keras.Model):
         # If adversarial training is used get adversarial examples for training batch
         if self.adv_training_with != None:
             # Get adversarial examples
-            x = self.generate_adv_examples(x[:self.num_adv_examples], y[:self.num_adv_examples])
+            x = self.generate_adv_examples(x, y)
             # # Get clean images
             # clean_x = x[self.num_adv_examples:]
             # # Make new traininig batch
