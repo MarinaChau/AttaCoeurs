@@ -1,6 +1,7 @@
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import numpy as np
+from math import ceil 
 
 class AdversarialAttack:
     def __init__(self, model, eps=None):
