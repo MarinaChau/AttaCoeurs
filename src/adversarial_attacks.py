@@ -247,19 +247,19 @@ class DeepFool(AdversarialAttack):
 
 
 class APGD(AdversarialAttack):
-  
+    """
+    Simplified implementation of Auto-PGD attack following : https://arxiv.org/abs/2003.01690.
+    """
+
     def __init__(self, model, eps, alpha, num_iter, norm, rho=0.75):
         """
         List of parameters for Auto-PGD: 
         :param model: instance of tf.keras.Model that is used to generate adversarial examples with attack
         :param eps: float number - maximum perturbation size of adversarial attack 
-        :param norm: norm we will using 
+        :param alpha: portion of the momentum term we will use in a gradient stepsize
         :param num_iter: number of iterations
-        :param eta: lsit of stepsizes used in our Auto-PGD attack 
-        :param ckp: list of checkpoints identified during Auto-PGD
-        :param rho: parameter for decreasing the step size    
-        :param loss: loss we will optimise, in {CrossEntropy-(CE), DifferenceLogitsRatio-(DLR)} 
-        :param norm: defines the norm we use for proj {L1,L2,Linf}
+        :param norm: defines the norm we use for proj {'L1','L2','Linf'}
+        :param rho: parameter for decreasing the step size in CONDITION 1
         """
         super().__init__(model, eps)
         self.eps = eps
@@ -270,14 +270,16 @@ class APGD(AdversarialAttack):
 
         # norm specification 
         self.norm = norm
-        # memory
-        self.eval_loss = []
-        self.iter = 0 
-        self.eta = []
-        self.ckp = []
-        self.prev_state = []
-        self.optimal = (0,0)
-        # info
+        
+        # MEMORY
+        self.eval_loss = [] # keeping track of the values of the loss
+        self.iter = 0   # number of run so far 
+        self.eta = []   # list of stepsizes used in our Auto-PGD attack 
+        self.ckp = []   # list of checkpoints built 
+        self.prev_state = [] # gradient with momentum needs to access the previous state
+        self.optimal = (0,0) # (x_max,f_max) 
+        
+        # INFO
         self.name = "Auto-PGD"
         self.specifics = "Auto-PGD - " \
                 f"eps: {eps} - alpha: {alpha} - " \
@@ -285,6 +287,8 @@ class APGD(AdversarialAttack):
 
     def generateCKP(self):
         """
+        This function initializes the checkpoints we will be using in the Auto-PGD attack.
+
         We proceed as in the article and define the checkpoints as 
         w_j = [p_j * num_iter ] ≤ num_iter,
         p_(j+1) = p_j + max{p_j - p_(j-1) -0.03, 0.06}
@@ -304,11 +308,13 @@ class APGD(AdversarialAttack):
             p_1 = p_2
             self.ckp.append(w)
               
-        # end of the checkpoints generation
 
 
     def intialiseAPGD(self,clean_image,true_label):
-        # Make sure memmory is empty 
+        """
+        Step before entering the for loop in Algotithm 1 of https://arxiv.org/pdf/2003.01690.pdf
+        """
+        # Making sure MEMORY is empty 
         self.eval_loss = []
         self.iter = 0 
         self.eta = []
@@ -316,9 +322,9 @@ class APGD(AdversarialAttack):
         self.prev_state = []
         self.optimal = (0,0)
         
-        # first step 
-        self.eta.append(2*self.eps)
-        self.prev_state = clean_image
+        # FIRST STEP
+        self.eta.append(2*self.eps) # we chose eta_0 = 2*eps as in the article
+        self.prev_state = clean_image   
 
         with tf.GradientTape(watch_accessed_variables=False) as tape : # compute \grad_f( x_k )
        
@@ -378,16 +384,17 @@ class APGD(AdversarialAttack):
         
         with tf.GradientTape(watch_accessed_variables=False) as tape :
 
-            # compute \grad_f( x_k )
+            # compute \grad_f( x_k ) 
             tape.watch(X)    
             pred = tf.squeeze(self.model(tf.expand_dims(X, axis=0)))
             loss = self.loss_obj(true_label, pred)  
-            gradient = tape.gradient(loss, X)          
-            # keeping track of the loss (for halvig stepsize)
-            self.eval_loss.append(loss)
-            # Compute z_(k+1)
-            z = X + self.eta[-1] * gradient 
-            z = self.projectionOnS(z,clean_image)
+            gradient = tape.gradient(loss, X) 
+
+            self.eval_loss.append(loss) # keeping track of the loss (for halvig stepsize)
+
+            
+            z = X + self.eta[-1] * gradient # Compute z_(k+1)
+            z = self.projectionOnS(z,clean_image) # projection on S of z_(k+1)
             
             # Compute x_(k+1)
             temp = X + self.alpha * ( z - X ) + (1-self.alpha) * (X - self.prev_state)
@@ -438,7 +445,7 @@ class APGD(AdversarialAttack):
         """
 
         X_attack = np.zeros(clean_images.shape) # memory of the attacks
-        self.generateCKP()          # checkpoints generation
+        self.generateCKP()  # checkpoints generation
         for i, (x, y) in enumerate(zip(clean_images, true_labels)):
 
             x = tf.convert_to_tensor(x)
@@ -447,7 +454,7 @@ class APGD(AdversarialAttack):
             x = tf.cast(x, tf.float32)
             y = tf.cast(y, tf.float32)
 
-            # initializatin of the A-PGD
+            # initializatin of the Auto-PGD
             x_attack = self.intialiseAPGD(x,y)
             for k in range(1, self.num_iter):
                 # add the pertubation following A-PGD algo 
@@ -501,7 +508,7 @@ def attack_visual_demo(model, Attack, attack_kwargs, images, labels):
                        "One Step Least Likely (Step 1.1)"]:
         attack_inputs = (images,)
     else:
-        attack_inputs = (images, labels)
+        attack_inputs = (images, labels) 
 
     # Get adversarial examples
     adv_examples = attack(*attack_inputs)
