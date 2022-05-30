@@ -258,7 +258,7 @@ class APGD(AdversarialAttack):
         :param eps: float number - maximum perturbation size of adversarial attack 
         :param alpha: portion of the momentum term we will use in a gradient stepsize
         :param num_iter: number of iterations
-        :param norm: defines the norm we use for proj {'L1','L2','Linf'}
+        :param norm: defines the norm we use for proj {L1,L2,Linf}
         :param rho: parameter for decreasing the step size in CONDITION 1
         """
         super().__init__(model, eps)
